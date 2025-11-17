@@ -1,14 +1,3 @@
-# streamlit_app.py
-# -*- coding: utf-8 -*-
-"""
-Streamlit UI for '7月26日データ実験車両指定実装.ipynb'
-- Upload the Excel file (same sheets as original)
-- Enter Google Maps API key (optional if you only use cached duration/latlng files)
-- Select vehicle types to use
-- Run solver (pulp)
-- View results and download Excel output
-"""
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -17,6 +6,8 @@ from collections import defaultdict
 from openpyxl import Workbook
 from datetime import time as dt_time
 import io
+
+DEFAULT_OUTPUT = "最適化結果.xlsx"
 
 st.set_page_config(page_title="車両指定配車最適化", layout="wide")
 st.title("車両指定付き配車最適化 (VRPTW)")
@@ -67,6 +58,7 @@ for _, row in df_car.iterrows():
             "車椅子一台あたりの人数": int(row["車椅子一台あたりの人数"]),
         }
         base_vehicles.append(car)
+
 MAX_TRIPS = 3
 vehicles = []
 for car in base_vehicles:
@@ -78,9 +70,33 @@ for car in base_vehicles:
         vehicles.append(new_car)
 v = len(vehicles)
 
+def to_seconds(t):
+    if isinstance(t, dt_time):
+        return t.hour * 3600 + t.minute * 60 + t.second
+    if pd.isna(t):
+        return None
+    if isinstance(t, (pd.Timestamp, pd.Series)):
+        try:
+            return int(t.hour * 3600 + t.minute * 60 + t.second)
+        except Exception:
+            return None
+    if isinstance(t, (int, float)):
+        return int(t)
+    if isinstance(t, str):
+        try:
+            parts = t.split(":")
+            if len(parts) == 3:
+                h, m, s = map(int, parts)
+                return h*3600 + m*60 + s
+            if len(parts) == 2:
+                h, m = map(int, parts)
+                return h*3600 + m*60
+        except Exception:
+            return None
+    return None
+
 if run_button:
     st.write(f"計算処理中...車両便数={v}")
-    # --- MILPモデル
     DAY_START_SEC = 8 * 3600
     BIG_M = 10 ** 5
     prob = pulp.LpProblem("VRPTW_full_fixed", pulp.LpMinimize)
@@ -124,6 +140,7 @@ if run_button:
              early_penalty * pulp.lpSum(early_violation) +
              late_penalty * pulp.lpSum(late_violation))
 
+    # 制約 (1)～(12)（インデント同一でコピペ！）
     # constraints (1)
     for i in range(1, n_nodes):
         prob += pulp.lpSum(x[(i, k)] for k in range(v)) == 1
@@ -208,13 +225,82 @@ if run_button:
             prob += trip_start[k2] >= trip_end[k1] + 600
             prob += used[k1] >= used[k2]
 
-solver = pulp.PULP_CBC_CMD(msg=1, timeLimit=int(solver_time_limit), threads=4)
-with st.spinner("ソルバー計算中…"):
+
+    for i in range(1, n_nodes):
+        prob += pulp.lpSum(x[(i, k)] for k in range(v)) == 1
+    for k, car in enumerate(vehicles):
+        normal_sum = pulp.lpSum(x[(i, k)] for i in range(1, n_nodes) if user_wheelchair[node_to_user[i]] == 0)
+        wc_sum = pulp.lpSum(car["車椅子一台あたりの人数"] * x[(i, k)] for i in range(1, n_nodes) if user_wheelchair[node_to_user[i]] == 1)
+        prob += (normal_sum + wc_sum) <= car["通常定員"] * used[k]
+        for i in range(1, n_nodes):
+            prob += x[(i, k)] <= used[k]
+    wc_idx = [i+1 for i in range(n_users) if user_wheelchair.get(users[i], 0) == 1]
+    for k, car in enumerate(vehicles):
+        if car["車椅子最大数"] is not None:
+            try:
+                prob += pulp.lpSum(x[(i, k)] for i in wc_idx) <= car["車椅子最大数"]
+            except Exception:
+                pass
+        if not car["車椅子対応"]:
+            prob += pulp.lpSum(x[(i, k)] for i in wc_idx) == 0
+    for k in range(v):
+        prob += pulp.lpSum(y[(0, j, k)] for j in range(1, n_nodes)) == pulp.lpSum(y[(i, 0, k)] for i in range(1, n_nodes))
+        prob += pulp.lpSum(y[(0, j, k)] for j in range(1, n_nodes)) == used[k] * 1
+    for k in range(v):
+        for i in range(1, n_nodes):
+            prob += pulp.lpSum(y[(i, j, k)] for j in range(n_nodes) if j != i) == x[(i, k)]
+            prob += pulp.lpSum(y[(j, i, k)] for j in range(n_nodes) if j != i) == x[(i, k)]
+    for k in range(v):
+        for j in range(1, n_nodes):
+            prob += arrival[j] >= trip_start[k] + int(duration_matrix[0, j]) - BIG_M * (1 - y[(0, j, k)])
+    for k in range(v):
+        for i in range(1, n_nodes):
+            for j in range(1, n_nodes):
+                if i == j: continue
+                prob += arrival[j] >= arrival[i] + pickup_times[node_to_user[i]] + int(duration_matrix[i, j]) - BIG_M * (1 - y[(i, j, k)])
+    for k in range(v):
+        for i in range(1, n_nodes):
+            prob += trip_end[k] >= arrival[i] + pickup_times[node_to_user[i]] + int(duration_matrix[i, 0]) - BIG_M * (1 - y[(i, 0, k)])
+    time_constraints = {}
+    if '利用者名' in df_time.columns:
+        for _, row in df_time.iterrows():
+            name = row.get("利用者名")
+            strict_val = int(row.get("開始時間厳守", 0) if not pd.isna(row.get("開始時間厳守", 0)) else 0)
+            start_time_val = row.get("開始時間")
+            time_constraints[name] = {"strict": strict_val, "time_sec": start_time_val}
+    for i in range(1, n_nodes):
+        uname = node_to_user[i]
+        tc = time_constraints.get(uname, {"strict": 0, "time_sec": None})
+        if tc["strict"] == 1 and tc["time_sec"] is not None:
+            desired = to_seconds(tc["time_sec"])
+            if desired is not None:
+                prob += arrival[i] >= desired - gosa
+                prob += arrival[i] <= desired + gosa
+    for k in range(v):
+        for i in range(1, n_nodes):
+            for j in range(1, n_nodes):
+                if i == j: continue
+                prob += u_var[(i, k)] - u_var[(j, k)] + n_users * y[(i, j, k)] <= n_users - 1
+    for k in range(v):
+        prob += max_time >= trip_end[k] - trip_start[k]
+    vehicle_trip_indices = defaultdict(list)
+    for k, car in enumerate(vehicles):
+        vehicle_trip_indices[car["車両名"]].append(k)
+    for car_name, trip_list in vehicle_trip_indices.items():
+        trip_list_sorted = sorted(trip_list)
+        for idx_ in range(len(trip_list_sorted)-1):
+            k1 = trip_list_sorted[idx_]
+            k2 = trip_list_sorted[idx_+1]
+            prob += trip_start[k2] >= trip_end[k1] + 600
+            prob += used[k1] >= used[k2]
+
+    solver = pulp.PULP_CBC_CMD(msg=1, timeLimit=int(solver_time_limit), threads=4)
+    with st.spinner("ソルバー計算中…"):
         res = prob.solve(solver)
     st.success(f"Solver status: {pulp.LpStatus[prob.status]}, obj: {pulp.value(prob.objective)}")
-    # ---------------------------
-    # Extract routes from y
-    # ---------------------------
+
+    # --- extract_routes_from_y, 結果処理部: 省略可（そのまま貼付でOK）---
+    # ...（省略。前回答例やCLIとも共通）...
     def extract_routes_from_y(y_vars, vehicles, n_nodes):
         routes = {}
         for k in range(len(vehicles)):
@@ -410,6 +496,7 @@ with st.spinner("ソルバー計算中…"):
 
     st.balloons()
     log.write("終了。")
+
 
 else:
     st.write("準備完了。サイドバーから設定を選び、[最適化を実行] を押してください。")
