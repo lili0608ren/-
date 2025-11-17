@@ -40,6 +40,14 @@ user_wc_flags = dict(zip(df_wc['利用者名'], df_wc['車いすの有無']))
 user_wheelchair = {u: int(user_wc_flags.get(u, 0)) for u in users}
 pickup_times = {u: 300 if user_wheelchair[u] == 1 else 180 for u in users}
 duration_matrix = pd.read_csv(dur_csv, index_col=0).to_numpy()
+# 行列サイズ確認
+st.write("duration_matrix shape:", duration_matrix.shape)
+st.write("n_nodes (利用者+1):", n_nodes)
+if duration_matrix.shape != (n_nodes, n_nodes):
+    st.error("duration_matrix (CSV) のサイズが利用者数+1 (デポ含む)と一致していません！")
+    st.error("  - 利用者数+1（行列サイズ）: " + str(n_nodes))
+    st.error("  - duration_matrix shape: " + str(duration_matrix.shape))
+    st.stop()
 
 車両候補リスト = df_car["車種"].astype(str).unique().tolist()
 use_cars = st.multiselect("使う車両を選んでください", 車両候補リスト, default=車両候補リスト)
