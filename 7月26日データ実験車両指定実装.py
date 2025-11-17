@@ -107,6 +107,14 @@ if run_button:
     st.write(f"計算処理中...車両便数={v}")
     DAY_START_SEC = 8 * 3600
     BIG_M = 10 ** 5
+    time_constraints = {}
+    if '利用者名' in df_time.columns:
+        for _, row in df_time.iterrows():
+            name = row.get("利用者名")
+            strict_val = int(row.get("開始時間厳守", 0) if not pd.isna(row.get("開始時間厳守", 0)) else 0)
+            start_time_val = row.get("開始時間")
+            time_constraints[name] = {"strict": strict_val, "time_sec": start_time_val}
+
     prob = pulp.LpProblem("VRPTW_full_fixed", pulp.LpMinimize)
 
     used = pulp.LpVariable.dicts("used", range(v), cat="Binary")
