@@ -1,10 +1,8 @@
-# ===== Streamlitで動かすためのライブラリ一覧 =====
 streamlit
-mip
 pulp
 openpyxl
 googlemaps
 pandas
 numpy
-ortools
 requests
+ortools
