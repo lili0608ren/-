@@ -321,12 +321,12 @@ if run_button:
     n_full = len(locations_full)
     total_pairs = n_full * (n_full - 1)
     prog = st.progress(0)
-    step = 0
+    step = [0]  
 
     def progress_callback(n=1):
-        nonlocal step
-        step += n
-        prog.progress(min(100, int(step/total_pairs*100)))
+        step[0] += n   
+        prog.progress(min(100, int(step[0]/total_pairs*100)))
+
 
     duration_matrix, new_cache_df = build_duration_matrix(locations_full, cache_df=duration_cache_df_local,
                                                           api_key=api_key_input, progress_callback=progress_callback)
