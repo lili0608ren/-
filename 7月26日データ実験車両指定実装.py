@@ -511,7 +511,7 @@ if run_button:
                        file_name=DEFAULT_OUTPUT, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
     st.balloons()
-    log.write("終了。")
+    #log.write("終了。")
 
 
 else:
