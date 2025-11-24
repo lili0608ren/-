@@ -473,6 +473,7 @@ if run_button:
     for u in users:
         if u in assign_map:
             d = assign_map[u]
+            total_time = total_times_map.get(d["便名"], "")
             df_assign.append({
                 "利用者名": u,
                 "車椅子": d["車椅子の有無"],
@@ -481,14 +482,19 @@ if run_button:
                 "ピックアップ時刻": f"{d['ピックアップ_time_h']:02d}:{d['ピックアップ_time_m']:02d}:{d['ピックアップ_time_s']:02d}" if d["ピックアップ_time_h"] is not None else "",
                 "順番": d["順番"],
                 "genshu": d.get("genshu_var", 0),
+                "便合計所要時間（分）": total_time,   # 追加
             })
         else:
             df_assign.append({
-                "利用者名": u, "車椅子": "", "車種": "", "便名": "", "ピックアップ時刻": "", "順番": "", "genshu": ""
+                "利用者名": u,
+                "車椅子": "", "車種": "", "便名": "",
+                "ピックアップ時刻": "", "順番": "",
+                "genshu": "",
+                "便合計所要時間（分）": ""
             })
     st.dataframe(pd.DataFrame(df_assign))
 
-    # Show routes compact
+        # Show routes compact
     st.subheader("便別ルート")
     rows = []
     for k, car in enumerate(vehicles):
@@ -496,15 +502,18 @@ if run_button:
         if not route:
             continue
         route_users = [node_to_user[idx] for idx in route if idx != 0]
+        total_time = total_times_map.get(car["便名"], "")
         rows.append({
             "便名": car["便名"],
             "車種": car["車両名"],
             "route_nodes": ",".join(map(str, route)),
             "route_users": " -> ".join(route_users),
-            "used": int(pulp.value(used[k]) or 0)
+            "used": int(pulp.value(used[k]) or 0),
+            "便合計所要時間（分）": total_time,  # 追加
         })
     if rows:
         st.table(pd.DataFrame(rows))
+
 
     # Download button
     st.download_button("結果 Excel をダウンロード", data=out_bytes.getvalue(),
