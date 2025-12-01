@@ -40,6 +40,7 @@ user_wc_flags = dict(zip(df_wc['利用者名'], df_wc['車いすの有無']))
 user_wheelchair = {u: int(user_wc_flags.get(u, 0)) for u in users}
 pickup_times = {u: 300 if user_wheelchair[u] == 1 else 180 for u in users}
 duration_matrix = pd.read_csv(dur_csv, index_col=0).to_numpy()
+
 # 行列サイズ確認
 st.write("duration_matrix shape:", duration_matrix.shape)
 st.write("n_nodes (利用者+1):", n_nodes)
@@ -103,6 +104,15 @@ def to_seconds(t):
             return None
     return None
 
+# 秒を "hh:mm:ss" にする関数（表示用）
+def sec2str(s):
+    if s is None or s == "" or pd.isna(s):
+        return ""
+    s = int(s)
+    h, rem = divmod(s, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h:02d}:{m:02d}:{s:02d}"
+
 if run_button:
     st.write(f"計算処理中...車両便数={v}")
     DAY_START_SEC = 8 * 3600
@@ -122,7 +132,8 @@ if run_button:
     y = {}
     for i in range(n_nodes):
         for j in range(n_nodes):
-            if i == j: continue
+            if i == j: 
+                continue
             for k in range(v):
                 y[(i, j, k)] = pulp.LpVariable(f"y_{i}_{j}_{k}", cat="Binary")
     arrival = [pulp.LpVariable(f"arrival_{i}", lowBound=0) for i in range(n_nodes)]
@@ -156,8 +167,8 @@ if run_button:
              early_penalty * pulp.lpSum(early_violation) +
              late_penalty * pulp.lpSum(late_violation))
 
-    # 制約 (1)～(12)（インデント同一でコピペ！）
-    # constraints (1)
+    # --- 制約 (1)～(12) ---
+    # (1) 各利用者はちょうど1便に割り当て
     for i in range(1, n_nodes):
         prob += pulp.lpSum(x[(i, k)] for k in range(v)) == 1
 
@@ -200,7 +211,8 @@ if run_button:
     for k in range(v):
         for i in range(1, n_nodes):
             for j in range(1, n_nodes):
-                if i == j: continue
+                if i == j: 
+                    continue
                 prob += arrival[j] >= arrival[i] + pickup_times[node_to_user[i]] + int(duration_matrix[i, j]) - BIG_M * (1 - y[(i, j, k)])
 
     # (8) trip_end
@@ -222,7 +234,8 @@ if run_button:
     for k in range(v):
         for i in range(1, n_nodes):
             for j in range(1, n_nodes):
-                if i == j: continue
+                if i == j: 
+                    continue
                 prob += u_var[(i, k)] - u_var[(j, k)] + n_users * y[(i, j, k)] <= n_users - 1
 
     # (11) max_time
@@ -241,88 +254,22 @@ if run_button:
             prob += trip_start[k2] >= trip_end[k1] + 600
             prob += used[k1] >= used[k2]
 
+    # （ここから下の制約の重複部分は削除してもよいが、元コードに合わせて残すならそのまま）
 
-    for i in range(1, n_nodes):
-        prob += pulp.lpSum(x[(i, k)] for k in range(v)) == 1
-    for k, car in enumerate(vehicles):
-        normal_sum = pulp.lpSum(x[(i, k)] for i in range(1, n_nodes) if user_wheelchair[node_to_user[i]] == 0)
-        wc_sum = pulp.lpSum(car["車椅子一台あたりの人数"] * x[(i, k)] for i in range(1, n_nodes) if user_wheelchair[node_to_user[i]] == 1)
-        prob += (normal_sum + wc_sum) <= car["通常定員"] * used[k]
-        for i in range(1, n_nodes):
-            prob += x[(i, k)] <= used[k]
-    wc_idx = [i+1 for i in range(n_users) if user_wheelchair.get(users[i], 0) == 1]
-    for k, car in enumerate(vehicles):
-        if car["車椅子最大数"] is not None:
-            try:
-                prob += pulp.lpSum(x[(i, k)] for i in wc_idx) <= car["車椅子最大数"]
-            except Exception:
-                pass
-        if not car["車椅子対応"]:
-            prob += pulp.lpSum(x[(i, k)] for i in wc_idx) == 0
-    for k in range(v):
-        prob += pulp.lpSum(y[(0, j, k)] for j in range(1, n_nodes)) == pulp.lpSum(y[(i, 0, k)] for i in range(1, n_nodes))
-        prob += pulp.lpSum(y[(0, j, k)] for j in range(1, n_nodes)) == used[k] * 1
-    for k in range(v):
-        for i in range(1, n_nodes):
-            prob += pulp.lpSum(y[(i, j, k)] for j in range(n_nodes) if j != i) == x[(i, k)]
-            prob += pulp.lpSum(y[(j, i, k)] for j in range(n_nodes) if j != i) == x[(i, k)]
-    for k in range(v):
-        for j in range(1, n_nodes):
-            prob += arrival[j] >= trip_start[k] + int(duration_matrix[0, j]) - BIG_M * (1 - y[(0, j, k)])
-    for k in range(v):
-        for i in range(1, n_nodes):
-            for j in range(1, n_nodes):
-                if i == j: continue
-                prob += arrival[j] >= arrival[i] + pickup_times[node_to_user[i]] + int(duration_matrix[i, j]) - BIG_M * (1 - y[(i, j, k)])
-    for k in range(v):
-        for i in range(1, n_nodes):
-            prob += trip_end[k] >= arrival[i] + pickup_times[node_to_user[i]] + int(duration_matrix[i, 0]) - BIG_M * (1 - y[(i, 0, k)])
-    time_constraints = {}
-    if '利用者名' in df_time.columns:
-        for _, row in df_time.iterrows():
-            name = row.get("利用者名")
-            strict_val = int(row.get("開始時間厳守", 0) if not pd.isna(row.get("開始時間厳守", 0)) else 0)
-            start_time_val = row.get("開始時間")
-            time_constraints[name] = {"strict": strict_val, "time_sec": start_time_val}
-    for i in range(1, n_nodes):
-        uname = node_to_user[i]
-        tc = time_constraints.get(uname, {"strict": 0, "time_sec": None})
-        if tc["strict"] == 1 and tc["time_sec"] is not None:
-            desired = to_seconds(tc["time_sec"])
-            if desired is not None:
-                prob += arrival[i] >= desired - gosa
-                prob += arrival[i] <= desired + gosa
-    for k in range(v):
-        for i in range(1, n_nodes):
-            for j in range(1, n_nodes):
-                if i == j: continue
-                prob += u_var[(i, k)] - u_var[(j, k)] + n_users * y[(i, j, k)] <= n_users - 1
-    for k in range(v):
-        prob += max_time >= trip_end[k] - trip_start[k]
-    vehicle_trip_indices = defaultdict(list)
-    for k, car in enumerate(vehicles):
-        vehicle_trip_indices[car["車両名"]].append(k)
-    for car_name, trip_list in vehicle_trip_indices.items():
-        trip_list_sorted = sorted(trip_list)
-        for idx_ in range(len(trip_list_sorted)-1):
-            k1 = trip_list_sorted[idx_]
-            k2 = trip_list_sorted[idx_+1]
-            prob += trip_start[k2] >= trip_end[k1] + 600
-            prob += used[k1] >= used[k2]
-
+    # ソルバー実行
     solver = pulp.PULP_CBC_CMD(msg=1, timeLimit=int(solver_time_limit), threads=4)
     with st.spinner("ソルバー計算中…"):
         res = prob.solve(solver)
     st.success(f"Solver status: {pulp.LpStatus[prob.status]}, obj: {pulp.value(prob.objective)}")
 
-    # --- extract_routes_from_y, 結果処理部: 省略可（そのまま貼付でOK）---
-    # ...（省略。前回答例やCLIとも共通）...
+    # --- ルート抽出関数 ---
     def extract_routes_from_y(y_vars, vehicles, n_nodes):
         routes = {}
         for k in range(len(vehicles)):
             starts = [j for j in range(1, n_nodes)
                       if pulp.value(y_vars[(0, j, k)]) is not None and pulp.value(y_vars[(0, j, k)]) > 0.5]
-            if not starts: continue
+            if not starts: 
+                continue
             route = [0]
             cur = starts[0]
             route.append(cur)
@@ -332,14 +279,15 @@ if run_button:
                     route.append(0)
                     break
                 nexts = [j for j in range(1, n_nodes) if j != cur
-                        and pulp.value(y_vars[(cur, j, k)]) is not None and pulp.value(y_vars[(cur, j, k)]) > 0.5]
+                         and pulp.value(y_vars[(cur, j, k)]) is not None and pulp.value(y_vars[(cur, j, k)]) > 0.5]
                 found = None
                 for nx in nexts:
                     if nx not in visited:
                         found = nx
                         break
                 if found is None:
-                    if nexts: found = nexts[0]
+                    if nexts: 
+                        found = nexts[0]
                     else:
                         route.append(0)
                         break
@@ -359,6 +307,10 @@ if run_button:
     total_times_map = {}
     last_end_times = defaultdict(lambda: DAY_START_SEC)
 
+    # 便ごとの start/end をあとで使えるようにマップに保存
+    trip_start_map = {}
+    trip_end_map = {}
+
     for k, car in enumerate(vehicles):
         if k not in routes_by_k:
             continue
@@ -367,6 +319,11 @@ if run_button:
             base_start = int(pulp.value(trip_start[k])) if pulp.value(trip_start[k]) is not None else DAY_START_SEC
         else:
             base_start = DAY_START_SEC
+
+        trip_start_map[car["便名"]] = base_start
+        trip_end_val = int(pulp.value(trip_end[k])) if pulp.value(trip_end[k]) is not None else None
+        trip_end_map[car["便名"]] = trip_end_val
+
         current = max(last_end_times[car["車両名"]], base_start)
         for idx in range(1, len(route) - 1):
             prev = route[idx - 1]
@@ -411,10 +368,7 @@ if run_button:
         if info.get("ピックアップ_time_h") is None:
             continue
         arrival_sec = info["ピックアップ_time_h"] * 3600 + info["ピックアップ_time_m"] * 60 + info["ピックアップ_time_s"]
-        if isinstance(desired, dt_time) or isinstance(desired, pd.Timestamp):
-            desired_sec = to_seconds(desired)
-        else:
-            desired_sec = to_seconds(desired)
+        desired_sec = to_seconds(desired)
         if desired_sec is None:
             continue
         if abs(arrival_sec - desired_sec) > gosa:
@@ -461,67 +415,94 @@ if run_button:
     wb_out.save(out_bytes)
     out_bytes.seek(0)
 
-    # Display summary tables
+    # -----------------------------
+    # ここから Streamlit 表示部の改善
+    # -----------------------------
     st.header("結果概要")
     if violations:
         st.warning(f"注意: {len(violations)} 件の時間窓違反があります。'違反チェック' シートをダウンロードして確認してください。")
     else:
         st.success("全員の到着が許容内です。")
 
-    # Show assign table
-    df_assign = []
+    # 利用者ごとの表を作成
+    df_assign_rows = []
     for u in users:
         if u in assign_map:
             d = assign_map[u]
             total_time = total_times_map.get(d["便名"], "")
-            df_assign.append({
+            # ピックアップ時刻を hh:mm:ss に
+            if d["ピックアップ_time_h"] is not None:
+                pickup_str = f"{d['ピックアップ_time_h']:02d}:{d['ピックアップ_time_m']:02d}:{d['ピックアップ_time_s']:02d}"
+            else:
+                pickup_str = ""
+
+            # 便名からデポ出発・到着を取得して文字列化
+            dep_start_sec = trip_start_map.get(d["便名"], None)
+            dep_end_sec = trip_end_map.get(d["便名"], None)
+
+            df_assign_rows.append({
                 "利用者名": u,
                 "車椅子": d["車椅子の有無"],
-                "車種": d["車種"],
                 "便名": d["便名"],
-                "ピックアップ時刻": f"{d['ピックアップ_time_h']:02d}:{d['ピックアップ_time_m']:02d}:{d['ピックアップ_time_s']:02d}" if d["ピックアップ_time_h"] is not None else "",
+                "ピックアップ時刻": pickup_str,
                 "順番": d["順番"],
-                "genshu": d.get("genshu_var", 0),
-                "便合計所要時間（分）": total_time,   # 追加
+                "便合計所要時間（分）": total_time,
+                "デポ出発": sec2str(dep_start_sec),
+                "デポ到着": sec2str(dep_end_sec),
             })
         else:
-            df_assign.append({
+            df_assign_rows.append({
                 "利用者名": u,
-                "車椅子": "", "車種": "", "便名": "",
-                "ピックアップ時刻": "", "順番": "",
-                "genshu": "",
-                "便合計所要時間（分）": ""
+                "車椅子": "",
+                "便名": "",
+                "ピックアップ時刻": "",
+                "順番": "",
+                "便合計所要時間（分）": "",
+                "デポ出発": "",
+                "デポ到着": "",
             })
-    st.dataframe(pd.DataFrame(df_assign))
 
-        # Show routes compact
+    df_assign = pd.DataFrame(df_assign_rows)
+
+    # 便名順（＝車両ごと）に並べ替え
+    df_assign = df_assign.sort_values(["便名", "順番"])
+
+    # 「車種」「genshu」は表示しない（DF自体に含めていない設計に変更済み）
+    st.subheader("利用者別 配車結果")
+    st.dataframe(df_assign, use_container_width=True)
+
+    # 便別ルート
     st.subheader("便別ルート")
-    rows = []
+    route_rows = []
     for k, car in enumerate(vehicles):
         route = routes_by_k.get(k, [])
         if not route:
             continue
         route_users = [node_to_user[idx] for idx in route if idx != 0]
+        start_sec = trip_start_map.get(car["便名"], None)
+        end_sec = trip_end_map.get(car["便名"], None)
         total_time = total_times_map.get(car["便名"], "")
-        rows.append({
+        route_rows.append({
             "便名": car["便名"],
-            "車種": car["車両名"],
             "route_nodes": ",".join(map(str, route)),
             "route_users": " -> ".join(route_users),
-            "used": int(pulp.value(used[k]) or 0),
-            "便合計所要時間（分）": total_time,  # 追加
+            "デポ出発": sec2str(start_sec),
+            "デポ到着": sec2str(end_sec),
+            "便合計所要時間（分）": total_time,
         })
-    if rows:
-        st.table(pd.DataFrame(rows))
 
+    if route_rows:
+        df_routes = pd.DataFrame(route_rows)
+        # 出発時刻順に並べ替え
+        df_routes = df_routes.sort_values("デポ出発")
+        # 「車種」「used」は含めていない
+        st.table(df_routes)
 
     # Download button
     st.download_button("結果 Excel をダウンロード", data=out_bytes.getvalue(),
                        file_name=DEFAULT_OUTPUT, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
     st.balloons()
-    #log.write("終了。")
-
 
 else:
     st.write("準備完了。サイドバーから設定を選び、[最適化を実行] を押してください。")
