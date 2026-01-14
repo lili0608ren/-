@@ -494,7 +494,7 @@ if run_button:
     if route_rows:
         df_routes = pd.DataFrame(route_rows)
         # 出発時刻順に並べ替え
-        df_routes = df_routes.sort_values("デポ出発")
+        df_routes = df_routes.sort_values("便名")
         # 「車種」「used」は含めていない
         st.table(df_routes)
 
