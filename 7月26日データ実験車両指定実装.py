@@ -19,7 +19,7 @@ st.sidebar.header("設定")
 uploaded = st.sidebar.file_uploader("Excelファイルをアップロード", type=["xlsx", "xls"])
 dur_csv = st.sidebar.file_uploader("duration_matrix CSVファイル", type=["csv"])
 gosa = st.sidebar.number_input("許容誤差 gosa (秒)", value=300, step=60)
-solver_time_limit = st.sidebar.number_input("Solver time limit (秒)", value=960, step=60)
+solver_time_limit = st.sidebar.number_input("Solver time limit (秒)", value=1800, step=60)
 run_button = st.sidebar.button("最適化を実行")
 
 if not uploaded or not dur_csv:
@@ -164,8 +164,8 @@ if run_button:
     early_penalty = 1000000
     late_penalty  = 1000000
     for i in range(1, n_nodes):
-        prob += early_violation[i] >= 8*3600 - arrival[i]
-        prob += late_violation[i]  >= arrival[i] - 10*3600
+        prob += early_violation[i] >= 8*3600 - trip_start
+        prob += late_violation[i]  >= trip_end - 10*3600
     prob += (vehicle_penalty_term + max_time +
              early_penalty * pulp.lpSum(early_violation) +
              late_penalty * pulp.lpSum(late_violation))
@@ -256,11 +256,7 @@ if run_button:
             k2 = trip_list_sorted[idx_+1]
             prob += trip_start[k2] >= trip_end[k1] + 600
             prob += used[k1] >= used[k2]
-    # (13) 各便は10:00までにデポに戻る
-    for k in range(v):
-        prob += trip_end[k] <= DAY_END_SEC
-
-    solver = pulp.PULP_CBC_CMD(msg=1, timeLimit=int(solver_time_limit), threads=4)
+    
 
     # ソルバー実行時間計測
     start_time = time.time()
