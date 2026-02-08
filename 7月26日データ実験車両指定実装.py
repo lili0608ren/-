@@ -253,6 +253,10 @@ if run_button:
             k2 = trip_list_sorted[idx_+1]
             prob += trip_start[k2] >= trip_end[k1] + 600
             prob += used[k1] >= used[k2]
+    # (13) 各便は10:00までにデポに戻る
+    for k in range(v):
+        prob += trip_end[k] <= DAY_END_SEC
+
 
     # （ここから下の制約の重複部分は削除してもよいが、元コードに合わせて残すならそのまま）
 
