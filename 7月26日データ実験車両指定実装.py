@@ -116,6 +116,7 @@ def sec2str(s):
 if run_button:
     st.write(f"計算処理中...車両便数={v}")
     DAY_START_SEC = 8 * 3600
+    DAY_END_SEC   = 10 * 3600 
     BIG_M = 10 ** 5
     time_constraints = {}
     if '利用者名' in df_time.columns:
