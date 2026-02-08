@@ -159,13 +159,15 @@ if run_button:
         else:
             car_penalty.append(1)
     vehicle_penalty_term = pulp.lpSum(car_penalty[k] * used[k] for k in range(v))
-    early_violation = [pulp.LpVariable(f"early_v_{i}", lowBound=0) for i in range(n_nodes)]
-    late_violation  = [pulp.LpVariable(f"late_v_{i}", lowBound=0) for i in range(n_nodes)]
+
+    early_violation_trip = [pulp.LpVariable(f"early_v_trip_{k}", lowBound=0) for k in range(v)]
+    late_violation_trip  = [pulp.LpVariable(f"late_v_trip_{k}",  lowBound=0) for k in range(v)]
     early_penalty = 1000000
     late_penalty  = 1000000
-    for i in range(1, n_nodes):
-        prob += early_violation[i] >= 8*3600 - trip_start
-        prob += late_violation[i]  >= trip_end - 10*3600
+    for k in range(v):
+        prob += early_violation_trip[k] >= 8*3600 - trip_start[k]
+        prob += late_violation_trip[k]  >= trip_end[k] - 10*3600
+
     prob += (vehicle_penalty_term + max_time +
              early_penalty * pulp.lpSum(early_violation) +
              late_penalty * pulp.lpSum(late_violation))
