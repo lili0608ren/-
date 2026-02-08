@@ -8,7 +8,6 @@ from datetime import time as dt_time
 import io
 import time
 
-
 DEFAULT_OUTPUT = "最適化結果.xlsx"
 
 st.set_page_config(page_title="車両指定配車最適化", layout="wide")
@@ -81,6 +80,7 @@ for car in base_vehicles:
         vehicles.append(new_car)
 v = len(vehicles)
 
+
 def to_seconds(t):
     if isinstance(t, dt_time):
         return t.hour * 3600 + t.minute * 60 + t.second
@@ -106,7 +106,7 @@ def to_seconds(t):
             return None
     return None
 
-# 秒を "hh:mm:ss" にする関数（表示用）
+
 def sec2str(s):
     if s is None or s == "" or pd.isna(s):
         return ""
@@ -115,11 +115,14 @@ def sec2str(s):
     m, s = divmod(rem, 60)
     return f"{h:02d}:{m:02d}:{s:02d}"
 
+
 if run_button:
     st.write(f"計算処理中...車両便数={v}")
     DAY_START_SEC = 8 * 3600
-    DAY_END_SEC   = 10 * 3600 
+    DAY_END_SEC   = 10 * 3600
     BIG_M = 10 ** 5
+
+    # 時間制約読み込み
     time_constraints = {}
     if '利用者名' in df_time.columns:
         for _, row in df_time.iterrows():
@@ -135,10 +138,11 @@ if run_button:
     y = {}
     for i in range(n_nodes):
         for j in range(n_nodes):
-            if i == j: 
+            if i == j:
                 continue
             for k in range(v):
                 y[(i, j, k)] = pulp.LpVariable(f"y_{i}_{j}_{k}", cat="Binary")
+
     arrival = [pulp.LpVariable(f"arrival_{i}", lowBound=0) for i in range(n_nodes)]
     trip_start = [pulp.LpVariable(f"trip_start_{k}", lowBound=DAY_START_SEC) for k in range(v)]
     trip_end = [pulp.LpVariable(f"trip_end_{k}", lowBound=DAY_START_SEC) for k in range(v)]
@@ -148,6 +152,7 @@ if run_button:
         for k in range(v):
             u_var[(i, k)] = pulp.LpVariable(f"u_{i}_{k}", lowBound=1, upBound=n_users, cat="Integer")
     max_time = pulp.LpVariable("max_time", lowBound=0)
+
     car_penalty = []
     for car in vehicles:
         if "パレット" in car["車両名"]:
@@ -160,27 +165,38 @@ if run_button:
             car_penalty.append(1)
     vehicle_penalty_term = pulp.lpSum(car_penalty[k] * used[k] for k in range(v))
 
+    # 便単位の早着・遅着違反量
     early_violation_trip = [pulp.LpVariable(f"early_v_trip_{k}", lowBound=0) for k in range(v)]
     late_violation_trip  = [pulp.LpVariable(f"late_v_trip_{k}",  lowBound=0) for k in range(v)]
     early_penalty = 1000000
     late_penalty  = 1000000
     for k in range(v):
-        prob += early_violation_trip[k] >= 8*3600 - trip_start[k]
-        prob += late_violation_trip[k]  >= trip_end[k] - 10*3600
+        prob += early_violation_trip[k] >= DAY_START_SEC - trip_start[k]
+        prob += late_violation_trip[k]  >= trip_end[k] - DAY_END_SEC
 
-    prob += (vehicle_penalty_term + max_time +
-             early_penalty * pulp.lpSum(early_violation_trip) +
-             late_penalty  * pulp.lpSum(late_violation_trip))
+    # 目的関数
+    prob += (
+        vehicle_penalty_term +
+        max_time +
+        early_penalty * pulp.lpSum(early_violation_trip) +
+        late_penalty  * pulp.lpSum(late_violation_trip)
+    )
 
-    # --- 制約 (1)～(12) ---
     # (1) 各利用者はちょうど1便に割り当て
     for i in range(1, n_nodes):
         prob += pulp.lpSum(x[(i, k)] for k in range(v)) == 1
 
     # (2) capacity
     for k, car in enumerate(vehicles):
-        normal_sum = pulp.lpSum(x[(i, k)] for i in range(1, n_nodes) if user_wheelchair[node_to_user[i]] == 0)
-        wc_sum = pulp.lpSum(car["車椅子一台あたりの人数"] * x[(i, k)] for i in range(1, n_nodes) if user_wheelchair[node_to_user[i]] == 1)
+        normal_sum = pulp.lpSum(
+            x[(i, k)] for i in range(1, n_nodes)
+            if user_wheelchair[node_to_user[i]] == 0
+        )
+        wc_sum = pulp.lpSum(
+            car["車椅子一台あたりの人数"] * x[(i, k)]
+            for i in range(1, n_nodes)
+            if user_wheelchair[node_to_user[i]] == 1
+        )
         prob += (normal_sum + wc_sum) <= car["通常定員"] * used[k]
         for i in range(1, n_nodes):
             prob += x[(i, k)] <= used[k]
@@ -189,17 +205,16 @@ if run_button:
     wc_idx = [i+1 for i in range(n_users) if user_wheelchair.get(users[i], 0) == 1]
     for k, car in enumerate(vehicles):
         if car["車椅子最大数"] is not None:
-            try:
-                prob += pulp.lpSum(x[(i, k)] for i in wc_idx) <= car["車椅子最大数"]
-            except Exception:
-                pass
+            prob += pulp.lpSum(x[(i, k)] for i in wc_idx) <= car["車椅子最大数"]
         if not car["車椅子対応"]:
             prob += pulp.lpSum(x[(i, k)] for i in wc_idx) == 0
 
     # (4) depot flow
     for k in range(v):
-        prob += pulp.lpSum(y[(0, j, k)] for j in range(1, n_nodes)) == pulp.lpSum(y[(i, 0, k)] for i in range(1, n_nodes))
-        prob += pulp.lpSum(y[(0, j, k)] for j in range(1, n_nodes)) == used[k] * 1
+        prob += pulp.lpSum(y[(0, j, k)] for j in range(1, n_nodes)) == pulp.lpSum(
+            y[(i, 0, k)] for i in range(1, n_nodes)
+        )
+        prob += pulp.lpSum(y[(0, j, k)] for j in range(1, n_nodes)) == used[k]
 
     # (5) flow conservation
     for k in range(v):
@@ -216,16 +231,20 @@ if run_button:
     for k in range(v):
         for i in range(1, n_nodes):
             for j in range(1, n_nodes):
-                if i == j: 
+                if i == j:
                     continue
-                prob += arrival[j] >= arrival[i] + pickup_times[node_to_user[i]] + int(duration_matrix[i, j]) - BIG_M * (1 - y[(i, j, k)])
+                prob += arrival[j] >= arrival[i] + pickup_times[node_to_user[i]] + int(
+                    duration_matrix[i, j]
+                ) - BIG_M * (1 - y[(i, j, k)])
 
     # (8) trip_end
     for k in range(v):
         for i in range(1, n_nodes):
-            prob += trip_end[k] >= arrival[i] + pickup_times[node_to_user[i]] + int(duration_matrix[i, 0]) - BIG_M * (1 - y[(i, 0, k)])
+            prob += trip_end[k] >= arrival[i] + pickup_times[node_to_user[i]] + int(
+                duration_matrix[i, 0]
+            ) - BIG_M * (1 - y[(i, 0, k)])
 
-    # (9) strict time windows
+    # (9) strict time windows (利用者希望時刻 ±gosa)
     for i in range(1, n_nodes):
         uname = node_to_user[i]
         tc = time_constraints.get(uname, {"strict": 0, "time_sec": None})
@@ -239,7 +258,7 @@ if run_button:
     for k in range(v):
         for i in range(1, n_nodes):
             for j in range(1, n_nodes):
-                if i == j: 
+                if i == j:
                     continue
                 prob += u_var[(i, k)] - u_var[(j, k)] + n_users * y[(i, j, k)] <= n_users - 1
 
@@ -258,67 +277,66 @@ if run_button:
             k2 = trip_list_sorted[idx_+1]
             prob += trip_start[k2] >= trip_end[k1] + 600
             prob += used[k1] >= used[k2]
-    
 
-    # ソルバー実行時間計測
+    # ソルバー
+    solver = pulp.PULP_CBC_CMD(msg=1, timeLimit=solver_time_limit, threads=4)
     start_time = time.time()
     with st.spinner("ソルバー計算中…"):
         res = prob.solve(solver)
     end_time = time.time()
-    elapsed = end_time - start_time  # 秒
+    elapsed = end_time - start_time
 
     st.success(f"Solver status: {pulp.LpStatus[prob.status]}, obj: {pulp.value(prob.objective)}")
     st.write(f"ソルバー実行時間: {elapsed:.2f} 秒")
 
+    # ==== 目的関数各項の値 ====
+    obj_max_time = pulp.value(max_time)
+    obj_vehicle_pen = sum(car_penalty[k] * (pulp.value(used[k]) or 0) for k in range(v))
+    obj_early_raw = sum((pulp.value(early_violation_trip[k]) or 0) for k in range(v))
+    obj_early_pen = early_penalty * obj_early_raw
+    obj_late_raw = sum((pulp.value(late_violation_trip[k]) or 0) for k in range(v))
+    obj_late_pen = late_penalty * obj_late_raw
 
-# ==== 目的関数各項の値を計算 ====
-# (1) 各便の運行時間の最大値
-obj_max_time = pulp.value(max_time)
-
-# (2) 車両使用ペナルティ項
-obj_vehicle_pen = sum(car_penalty[k] * (pulp.value(used[k]) or 0) for k in range(v))
-
-# (3) 早着違反ペナルティ項（便ごとの trip_start ベース）
-obj_early_raw = sum((pulp.value(early_violation_trip[k]) or 0) for k in range(v))
-obj_early_pen = early_penalty * obj_early_raw
-
-# (4) 遅着違反ペナルティ項（便ごとの trip_end ベース）
-obj_late_raw = sum((pulp.value(late_violation_trip[k]) or 0) for k in range(v))
-obj_late_pen = late_penalty * obj_late_raw
-
-# ==== Streamlit 表示 ====
-st.subheader("目的関数の各項の値")
-st.write(f"(1) 最大運行時間 max_time [秒]: {obj_max_time}")
-st.write(f"(2) 車両使用ペナルティ: {obj_vehicle_pen}")
-st.write(f"(3) 早着違反量の合計（便）: {obj_early_raw}  → ペナルティ項: {obj_early_pen}")
-st.write(f"(4) 遅着違反量の合計（便）: {obj_late_raw}  → ペナルティ項: {obj_late_pen}")
-
+    st.subheader("目的関数の各項の値")
+    st.write(f"(1) 最大運行時間 max_time [秒]: {obj_max_time}")
+    st.write(f"(2) 車両使用ペナルティ: {obj_vehicle_pen}")
+    st.write(f"(3) 早着違反量の合計（便）: {obj_early_raw}  → ペナルティ項: {obj_early_pen}")
+    st.write(f"(4) 遅着違反量の合計（便）: {obj_late_raw}  → ペナルティ項: {obj_late_pen}")
 
     # --- ルート抽出関数 ---
     def extract_routes_from_y(y_vars, vehicles, n_nodes):
         routes = {}
         for k in range(len(vehicles)):
-            starts = [j for j in range(1, n_nodes)
-                      if pulp.value(y_vars[(0, j, k)]) is not None and pulp.value(y_vars[(0, j, k)]) > 0.5]
-            if not starts: 
+            starts = [
+                j for j in range(1, n_nodes)
+                if pulp.value(y_vars[(0, j, k)]) is not None and pulp.value(y_vars[(0, j, k)]) > 0.5
+            ]
+            if not starts:
                 continue
             route = [0]
             cur = starts[0]
             route.append(cur)
             visited = set([cur])
             while True:
-                if pulp.value(y_vars.get((cur, 0, k), 0)) is not None and pulp.value(y_vars.get((cur, 0, k), 0)) > 0.5:
+                if (
+                    pulp.value(y_vars.get((cur, 0, k), 0)) is not None
+                    and pulp.value(y_vars.get((cur, 0, k), 0)) > 0.5
+                ):
                     route.append(0)
                     break
-                nexts = [j for j in range(1, n_nodes) if j != cur
-                         and pulp.value(y_vars[(cur, j, k)]) is not None and pulp.value(y_vars[(cur, j, k)]) > 0.5]
+                nexts = [
+                    j for j in range(1, n_nodes)
+                    if j != cur
+                    and pulp.value(y_vars[(cur, j, k)]) is not None
+                    and pulp.value(y_vars[(cur, j, k)]) > 0.5
+                ]
                 found = None
                 for nx in nexts:
                     if nx not in visited:
                         found = nx
                         break
                 if found is None:
-                    if nexts: 
+                    if nexts:
                         found = nexts[0]
                     else:
                         route.append(0)
@@ -334,12 +352,9 @@ st.write(f"(4) 遅着違反量の合計（便）: {obj_late_raw}  → ペナル�
 
     routes_by_k = extract_routes_from_y(y, vehicles, n_nodes)
 
-    # Build assign_map and totals
     assign_map = {}
     total_times_map = {}
     last_end_times = defaultdict(lambda: DAY_START_SEC)
-
-    # 便ごとの start/end をあとで使えるようにマップに保存
     trip_start_map = {}
     trip_end_map = {}
 
@@ -382,7 +397,11 @@ st.write(f"(4) 遅着違反量の合計（便）: {obj_late_raw}  → ペナル�
                 "ピックアップ_time_s": int(s) if s is not None else None,
                 "順番": f"{car['trip_index']}便目の{idx}",
                 "desired_strict": desired_val,
-                "genshu_var": int(pulp.value(genshu[user_to_node[user_name] - 1]) if pulp.value(genshu[user_to_node[user_name] - 1]) is not None else 0),
+                "genshu_var": int(
+                    pulp.value(genshu[user_to_node[user_name] - 1])
+                    if pulp.value(genshu[user_to_node[user_name] - 1]) is not None
+                    else 0
+                ),
             }
             current += pickup_times[user_name]
         last_node = route[-2] if len(route) >= 2 else 0
@@ -399,14 +418,18 @@ st.write(f"(4) 遅着違反量の合計（便）: {obj_late_raw}  → ペナル�
             continue
         if info.get("ピックアップ_time_h") is None:
             continue
-        arrival_sec = info["ピックアップ_time_h"] * 3600 + info["ピックアップ_time_m"] * 60 + info["ピックアップ_time_s"]
+        arrival_sec = (
+            info["ピックアップ_time_h"] * 3600
+            + info["ピックアップ_time_m"] * 60
+            + info["ピックアップ_time_s"]
+        )
         desired_sec = to_seconds(desired)
         if desired_sec is None:
             continue
         if abs(arrival_sec - desired_sec) > gosa:
             violations.append((u, desired_sec, arrival_sec))
 
-    # Prepare Excel output in memory
+    # Excel 出力
     wb_out = Workbook()
     ws_out = wb_out.active
     ws_out.title = "結果"
@@ -440,15 +463,17 @@ st.write(f"(4) 遅着違反量の合計（便）: {obj_late_raw}  → ペナル�
         route_users = [node_to_user[idx] for idx in route if idx != 0]
         trip_start_sol = int(pulp.value(trip_start[k])) if pulp.value(trip_start[k]) is not None else ""
         trip_end_sol = int(pulp.value(trip_end[k])) if pulp.value(trip_end[k]) is not None else ""
-        ws_r.append([car["便名"], ",".join(map(str, route)), "->".join(route_users), trip_start_sol, trip_end_sol, int(pulp.value(used[k]) or 0)])
+        ws_r.append([
+            car["便名"], ",".join(map(str, route)), "->".join(route_users),
+            trip_start_sol, trip_end_sol, int(pulp.value(used[k]) or 0)
+        ])
 
-    # Save workbook to bytes
     out_bytes = io.BytesIO()
     wb_out.save(out_bytes)
     out_bytes.seek(0)
 
     # -----------------------------
-    # ここから Streamlit 表示部の改善
+    # Streamlit 表示部
     # -----------------------------
     st.header("結果概要")
     if violations:
@@ -456,22 +481,17 @@ st.write(f"(4) 遅着違反量の合計（便）: {obj_late_raw}  → ペナル�
     else:
         st.success("全員の到着が許容内です。")
 
-    # 利用者ごとの表を作成
     df_assign_rows = []
     for u in users:
         if u in assign_map:
             d = assign_map[u]
             total_time = total_times_map.get(d["便名"], "")
-            # ピックアップ時刻を hh:mm:ss に
             if d["ピックアップ_time_h"] is not None:
                 pickup_str = f"{d['ピックアップ_time_h']:02d}:{d['ピックアップ_time_m']:02d}:{d['ピックアップ_time_s']:02d}"
             else:
                 pickup_str = ""
-
-            # 便名からデポ出発・到着を取得して文字列化
             dep_start_sec = trip_start_map.get(d["便名"], None)
             dep_end_sec = trip_end_map.get(d["便名"], None)
-
             df_assign_rows.append({
                 "利用者名": u,
                 "車椅子": d["車椅子の有無"],
@@ -495,15 +515,11 @@ st.write(f"(4) 遅着違反量の合計（便）: {obj_late_raw}  → ペナル�
             })
 
     df_assign = pd.DataFrame(df_assign_rows)
-
-    # 便名順（＝車両ごと）に並べ替え
     df_assign = df_assign.sort_values(["便名", "順番"])
 
-    # 「車種」「genshu」は表示しない（DF自体に含めていない設計に変更済み）
     st.subheader("利用者別 配車結果")
     st.dataframe(df_assign, use_container_width=True)
 
-    # 便別ルート
     st.subheader("便別ルート")
     route_rows = []
     for k, car in enumerate(vehicles):
@@ -522,17 +538,17 @@ st.write(f"(4) 遅着違反量の合計（便）: {obj_late_raw}  → ペナル�
             "デポ到着": sec2str(end_sec),
             "便合計所要時間（分）": total_time,
         })
-
     if route_rows:
         df_routes = pd.DataFrame(route_rows)
-        # 出発時刻順に並べ替え
         df_routes = df_routes.sort_values("便名")
-        # 「車種」「used」は含めていない
         st.table(df_routes)
 
-    # Download button
-    st.download_button("結果 Excel をダウンロード", data=out_bytes.getvalue(),
-                       file_name=DEFAULT_OUTPUT, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    st.download_button(
+        "結果 Excel をダウンロード",
+        data=out_bytes.getvalue(),
+        file_name=DEFAULT_OUTPUT,
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 
     st.balloons()
 
