@@ -506,3 +506,37 @@ if run_button:
 
 else:
     st.write("準備完了。サイドバーから設定を選び、[最適化を実行] を押してください。")
+
+
+    # ===============================
+    # 目的関数各項 (1)〜(4) の値を計算
+    # ===============================
+    # (1) 各便の運行時間の最大値
+    obj_max_time = pulp.value(max_time)
+
+    # (2) 車両使用ペナルティ項
+    obj_vehicle_pen = sum(
+        car_penalty[k] * (pulp.value(used[k]) or 0)
+        for k in range(v)
+    )
+
+    # (3) 早着違反ペナルティ項（サービス提供時間帯に対するもの）
+    obj_early_raw = sum(
+        (pulp.value(early_violation[i]) or 0)
+        for i in range(len(early_violation))
+    )
+    obj_early_pen = early_penalty * obj_early_raw
+
+    # (4) 遅着違反ペナルティ項（サービス提供時間帯に対するもの）
+    obj_late_raw = sum(
+        (pulp.value(late_violation[i]) or 0)
+        for i in range(len(late_violation))
+    )
+    obj_late_pen = late_penalty * obj_late_raw
+
+    # Streamlit 上に表示
+    st.subheader("目的関数の各項の値")
+    st.write(f"(1) 最大運行時間 max_time [秒]: {obj_max_time}")
+    st.write(f"(2) 車両使用ペナルティ: {obj_vehicle_pen}")
+    st.write(f"(3) 早着違反量の合計: {obj_early_raw}  → ペナルティ項: {obj_early_pen}")
+    st.write(f"(4) 遅着違反量の合計: {obj_late_raw}  → ペナルティ項: {obj_late_pen}")
