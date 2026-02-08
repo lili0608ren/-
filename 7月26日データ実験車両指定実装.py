@@ -260,6 +260,8 @@ if run_button:
     for k in range(v):
         prob += trip_end[k] <= DAY_END_SEC
 
+    solver = pulp.PULP_CBC_CMD(msg=1, timeLimit=int(solver_time_limit), threads=4)
+
     # ソルバー実行時間計測
     start_time = time.time()
     with st.spinner("ソルバー計算中…"):
@@ -269,6 +271,7 @@ if run_button:
 
     st.success(f"Solver status: {pulp.LpStatus[prob.status]}, obj: {pulp.value(prob.objective)}")
     st.write(f"ソルバー実行時間: {elapsed:.2f} 秒")
+
 
  # ===============================
     # 目的関数各項 (1)〜(4) の値を計算
