@@ -6,6 +6,8 @@ from collections import defaultdict
 from openpyxl import Workbook
 from datetime import time as dt_time
 import io
+import time
+
 
 DEFAULT_OUTPUT = "最適化結果.xlsx"
 
@@ -258,14 +260,16 @@ if run_button:
     for k in range(v):
         prob += trip_end[k] <= DAY_END_SEC
 
-
-    # （ここから下の制約の重複部分は削除してもよいが、元コードに合わせて残すならそのまま）
-
-    # ソルバー実行
-    solver = pulp.PULP_CBC_CMD(msg=1, timeLimit=int(solver_time_limit), threads=4)
+    # ソルバー実行時間計測
+    start_time = time.time()
     with st.spinner("ソルバー計算中…"):
         res = prob.solve(solver)
+    end_time = time.time()
+    elapsed = end_time - start_time  # 秒
+
     st.success(f"Solver status: {pulp.LpStatus[prob.status]}, obj: {pulp.value(prob.objective)}")
+    st.write(f"ソルバー実行時間: {elapsed:.2f} 秒")
+
  # ===============================
     # 目的関数各項 (1)〜(4) の値を計算
     # ===============================
